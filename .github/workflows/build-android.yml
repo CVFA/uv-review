@@ -1,0 +1,134 @@
+name: Build Android Termux Docker
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Use the official Docker Hub image with explicit architecture tags
+  TERMUX_IMAGE_AMD64: termux/termux-docker:x86_64
+  TERMUX_IMAGE_ARM64: termux/termux-docker:aarch64
+
+jobs:
+  build-termux-amd64:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Prepare source and build script
+        run: |
+          if [ -f uv-review ]; then
+            cp uv-review uv_review.py
+          fi
+
+          test -f uv_review.py
+          chmod +x scripts/build-inside-termux.sh
+          
+          # Allow the non-root Termux container user to write to the mounted workspace
+          chmod -R 777 .
+
+      - name: Build in termux-docker
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD":/build \
+            -w /build \
+            "$TERMUX_IMAGE_AMD64" \
+            bash /build/scripts/build-inside-termux.sh android-x86_64-termux
+
+      - name: Fix artifact ownership
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" artifacts || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: uv-review-android-x86_64-termux
+          path: artifacts/*
+          if-no-files-found: error
+
+  build-termux-arm64:
+    runs-on: ubuntu-latest
+
+    # ARM64 through QEMU can be very slow.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Prepare source and build script
+        run: |
+          if [ -f uv-review ]; then
+            cp uv-review uv_review.py
+          fi
+
+          test -f uv_review.py
+          chmod +x scripts/build-inside-termux.sh
+          
+          # Allow the non-root Termux container user to write to the mounted workspace
+          chmod -R 777 .
+
+      - name: Build in termux-docker
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD":/build \
+            -w /build \
+            "$TERMUX_IMAGE_ARM64" \
+            bash /build/scripts/build-inside-termux.sh android-arm64-v8a-termux
+
+      - name: Fix artifact ownership
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" artifacts || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: uv-review-android-arm64-v8a-termux
+          path: artifacts/*
+          if-no-files-found: error
+
+  release-android:
+    needs:
+      - build-termux-amd64
+      - build-termux-arm64
+
+    runs-on: ubuntu-latest
+
+    # Release if the x86_64 Termux build succeeded, even if ARM64 failed.
+    if: always() && needs.build-termux-amd64.result == 'success' && startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download Android Termux artifacts
+        uses: actions/download-artifact@v6
+        with:
+          path: artifacts
+          pattern: uv-review-android-*-termux
+          merge-multiple: true
+
+      - name: Create checksums
+        run: |
+          cd artifacts
+          sha256sum uv-review-* > SHA256SUMS-android.txt
+
+      - name: Publish Android artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: artifacts/*
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

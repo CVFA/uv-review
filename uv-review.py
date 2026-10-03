@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-uv-pip-review
+uv-review
 
 A pip-review-like utility that uses `uv pip` instead of `pip`.
 
@@ -12,12 +12,12 @@ Features:
   - Falls back to plain CLI prompts if Textual is unavailable.
 
 Examples:
-  uv-pip-review                         # list outdated packages
-  uv-pip-review -i                      # TUI selection, then batch update selected packages
-  uv-pip-review -i --no-tui             # CLI selection instead of TUI
-  uv-pip-review -a                      # automatically update all outdated packages
-  uv-pip-review -ar                     # automatic update, then re-check recursively
-  uv-pip-review --python .venv/bin/python
+  uv-review                         # list outdated packages
+  uv-review -i                      # TUI selection, then batch update selected packages
+  uv-review -i --no-tui             # CLI selection instead of TUI
+  uv-review -a                      # automatically update all outdated packages
+  uv-review -ar                     # automatic update, then re-check recursively
+  uv-review --python .venv/bin/python
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ import sys
 from dataclasses import dataclass
 from typing import List, Optional, Set
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,6 @@ try:
 
     TEXTUAL_AVAILABLE = True
 except Exception:
-    # Textual is optional. If it is not installed, fall back to CLI prompts.
     App = None
     ComposeResult = None
     Horizontal = None
@@ -73,10 +72,8 @@ except Exception:
 
 
 def cmd_str(cmd: List[str]) -> str:
-    """Return a printable representation of a command."""
     try:
         import shlex
-
         return shlex.join(cmd)
     except Exception:
         return " ".join(cmd)
@@ -88,14 +85,6 @@ def verbose_print(args: argparse.Namespace, msg: str) -> None:
 
 
 def find_uv(explicit: Optional[str]) -> str:
-    """
-    Locate the uv executable.
-
-    Order:
-      1. --uv-bin
-      2. UV_BIN environment variable
-      3. uv on PATH
-    """
     candidates: List[str] = []
 
     if explicit:
@@ -127,9 +116,6 @@ def find_uv(explicit: Optional[str]) -> str:
 
 
 def uv_base_args(args: argparse.Namespace) -> List[str]:
-    """
-    Arguments that are passed through to both `uv pip list` and `uv pip install`.
-    """
     extra: List[str] = []
 
     if args.python:
@@ -155,11 +141,6 @@ def run_uv(
     args: argparse.Namespace,
     capture: bool = False,
 ) -> subprocess.CompletedProcess:
-    """
-    Run a uv command.
-
-    If --dry-run is enabled, install commands are printed instead of executed.
-    """
     verbose_print(args, f"+ {cmd_str(cmd)}")
 
     if (
@@ -187,11 +168,6 @@ def run_uv(
 
 
 def run_list_command(cmd: List[str], args: argparse.Namespace) -> subprocess.CompletedProcess:
-    """
-    Run a `uv pip list` command.
-
-    If --exclude-editable was requested but is unsupported, retry once without it.
-    """
     try:
         return run_uv(cmd, args, capture=True)
     except subprocess.CalledProcessError:
@@ -211,9 +187,6 @@ def run_list_command(cmd: List[str], args: argparse.Namespace) -> subprocess.Com
 
 
 def normalize_payload(payload):
-    """
-    Accept either a JSON array or an object containing an array of packages.
-    """
     if isinstance(payload, dict):
         for key in ("packages", "results", "outdated"):
             if key in payload and isinstance(payload[key], list):
@@ -276,9 +249,6 @@ def get_outdated_json(
     args: argparse.Namespace,
     wanted: Optional[Set[str]],
 ) -> List[OutdatedPackage]:
-    """
-    Preferred implementation: use JSON output from uv.
-    """
     cmd = [uv, "pip", "list", "--outdated", "--format", "json"]
 
     if args.exclude_editable:
@@ -310,9 +280,6 @@ def get_outdated_table(
     args: argparse.Namespace,
     wanted: Optional[Set[str]],
 ) -> List[OutdatedPackage]:
-    """
-    Fallback implementation: parse human-readable table output from uv.
-    """
     cmd = [uv, "pip", "list", "--outdated"]
 
     if args.exclude_editable:
@@ -442,13 +409,6 @@ def print_selected(packages: List[OutdatedPackage]) -> None:
 def select_packages_cli(
     packages: List[OutdatedPackage],
 ) -> Optional[List[OutdatedPackage]]:
-    """
-    Plain command-line fallback.
-
-    Returns:
-      list   -> selected packages
-      None   -> user aborted
-    """
     selected: List[OutdatedPackage] = []
     total = len(packages)
 
@@ -485,7 +445,7 @@ def select_packages_cli(
 if TEXTUAL_AVAILABLE:
 
     class PackageSelector(App):
-        TITLE = "uv-pip-review"
+        TITLE = "uv-review"
 
         CSS = """
         #description {
@@ -565,13 +525,6 @@ if TEXTUAL_AVAILABLE:
 def select_packages_tui(
     packages: List[OutdatedPackage],
 ) -> Optional[List[OutdatedPackage]]:
-    """
-    Textual-based TUI selection.
-
-    Returns:
-      list   -> selected packages
-      None   -> user cancelled
-    """
     if not packages:
         return []
 
@@ -597,12 +550,7 @@ def select_packages(
     packages: List[OutdatedPackage],
     use_tui: bool = True,
 ) -> Optional[List[OutdatedPackage]]:
-    """
-    Select packages interactively.
-
-    Uses the Textual TUI when possible, otherwise falls back to CLI prompts.
-    """
-    if os.environ.get("UV_PIP_REVIEW_NO_TUI", "").lower() in {
+    if os.environ.get("UV_REVIEW_NO_TUI", "").lower() in {
         "1",
         "true",
         "yes",
@@ -649,9 +597,6 @@ def update_package(
     args: argparse.Namespace,
     package: OutdatedPackage,
 ) -> bool:
-    """
-    Update one package. Used for --auto mode.
-    """
     if args.pin_latest:
         spec = f"{package.name}=={package.latest}"
     else:
@@ -683,9 +628,6 @@ def update_packages_batch(
     args: argparse.Namespace,
     packages: List[OutdatedPackage],
 ) -> bool:
-    """
-    Update all selected packages in one uv pip install command.
-    """
     if not packages:
         return True
 
@@ -726,7 +668,7 @@ def update_packages_batch(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="uv-pip-review",
+        prog="uv-review",
         description=(
             "Review and update outdated Python packages using uv pip. "
             "Interactive mode selects packages first, then updates all "
@@ -1008,7 +950,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                 exit_code = 1
 
         else:
-            # Keep --auto behavior package-by-package for better failure isolation.
             for package in outdated:
                 if update_package(uv, args, package):
                     updated += 1
